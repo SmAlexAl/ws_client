@@ -6,14 +6,22 @@ type UserPool struct {
 }
 
 type User struct {
-	Token string
-	Name  string
+	Token     string
+	TokenByte []byte
+	Name      string
 }
 
-func (up *UserPool) initListTokenRequest() {
+func (up *UserPool) InitListTokenRequest() {
 	for _, tokenData := range fixtureList {
 		up.listTokenRequest = append(up.listTokenRequest, []byte(tokenData))
 	}
+}
+
+func (up *UserPool) GetRandomTokenByte() []byte {
+	arr := up.listTokenRequest[len(up.listTokenRequest)-1]
+	up.listTokenRequest = up.listTokenRequest[:len(up.listTokenRequest)-1]
+
+	return arr
 }
 
 var fixtureList = []string{

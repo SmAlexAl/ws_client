@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/SmAlexAl/ws_client/internal/userPool"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
 	"net/url"
@@ -13,8 +15,6 @@ import (
 	"os/signal"
 	"strconv"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 var addr = flag.String("addr", "localhost:8080", "http service address")
@@ -24,23 +24,31 @@ type TokenResponse struct {
 }
 
 func main() {
+	up := userPool.UserPool{}
+
+	up.InitListTokenRequest()
+
 	for j := 1; j <= 1; j++ {
-
-		var jsonStr = []byte(`{
-	"osVersion": "8.1.1",
-	"model": "iPhone 8",
-	"platform": "Iphone",
-	"pushToken": "string",
-	"locale": "ru",
-	
-	"applicationPackageName": "com.millcroft.inapp.sandbox",
-	"applicationVersion": "1.0.0",
-	"idfa": "9FF4ACCE-AEBF-4393-A354-E1B1FBF00B91",
-	"installId": "9FF4ACCE-AEBF-4393-A354-E1B1FBF00123",
-
-	"udid": "FF60EE70-1F11-4880-BDE0-F908F2B18F88"
-}`)
-		req, _ := http.NewRequest("POST", "http://localhost:8080/token", bytes.NewBuffer(jsonStr))
+		newUser := userPool.User{
+			Name:      "Profile" + strconv.Itoa(j),
+			TokenByte: up.GetRandomTokenByte(),
+		}
+		//		var jsonStr = []byte(`{
+		//	"osVersion": "8.1.1",
+		//	"model": "iPhone 8",
+		//	"platform": "Iphone",
+		//	"pushToken": "string",
+		//	"locale": "ru",
+		//
+		//	"applicationPackageName": "com.millcroft.inapp.sandbox",
+		//	"applicationVersion": "1.0.0",
+		//	"idfa": "9FF4ACCE-AEBF-4393-A354-E1B1FBF00B91",
+		//	"installId": "9FF4ACCE-AEBF-4393-A354-E1B1FBF00123",
+		//
+		//	"udid": "FF60EE70-1F11-4880-BDE0-F908F2B18F88"
+		//}`)
+		//		bytes.NewBuffer(jsonStr)
+		req, _ := http.NewRequest("POST", "http://localhost:8080/token", bytes.NewBuffer(newUser.TokenByte))
 		req.Header.Set("Content-Type", "application/json")
 
 		client := &http.Client{}
@@ -53,9 +61,10 @@ func main() {
 		respToken := &TokenResponse{}
 
 		decoder.Decode(respToken)
-		spew.Dump(respToken)
 
-		go listenWs(strconv.Itoa(j), respToken.Token)
+		newUser.Token = respToken.Token
+
+		go listenWs(&newUser)
 	}
 
 	fmt.Scanln()
@@ -64,12 +73,13 @@ func main() {
 type Object map[string]interface{}
 
 type Message struct {
-	Type   string `json:"type"`
-	Token  string `json:"token"`
-	Params Object `json:"params"`
+	Type    string `json:"type"`
+	Token   string `json:"token"`
+	Message string `json:"message"`
+	Pin     bool   `json:"pin"`
 }
 
-func listenWs(j string, token string) {
+func listenWs(user *userPool.User) {
 	flag.Parse()
 	log.SetFlags(0)
 
@@ -98,12 +108,13 @@ func listenWs(j string, token string) {
 			log.Printf("recv: %s", message)
 		}
 	}()
+	updateToken(user)
+
 	message := &Message{}
-	message.Token = ""
-	message.Params = make(Object)
-	message.Params["time"] = time.Now()
-	message.Params["profile"] = j + " profile"
-	message.Type = "message"
+	message.Token = user.Token
+	message.Pin = false
+	message.Message = user.Name + " 1"
+	message.Type = "authorization"
 
 	b, err := json.Marshal(message)
 	if err != nil {
@@ -115,37 +126,7 @@ func listenWs(j string, token string) {
 		fmt.Println("write error: ", err)
 		return
 	}
-
-	//убрать
-	//	var jsonStr = []byte(`{
-	//	"osVersion": "8.1.1",
-	//	"model": "iPhone 8",
-	//	"platform": "Iphone",
-	//	"pushToken": "string",
-	//	"locale": "ru",
-	//
-	//	"applicationPackageName": "com.millcroft.inapp.sandbox",
-	//	"applicationVersion": "1.0.0",
-	//	"idfa": "9FF4ACCE-AEBF-4393-A354-E1B1FBF00B91",
-	//	"installId": "9FF4ACCE-AEBF-4393-A354-E1B1FBF00123",
-	//
-	//	"udid": "FF60EE70-1F11-4880-BDE0-F908F2B18F88"
-	//}`)
-	//	req, _ := http.NewRequest("POST", "http://localhost:8080/token", bytes.NewBuffer(jsonStr))
-	//	req.Header.Set("Content-Type", "application/json")
-	//
-	//	client := &http.Client{}
-	//	resp, _ := client.Do(req)
-	//	defer resp.Body.Close()
-	//
-	//	decoder := json.NewDecoder(resp.Body)
-	//
-	//	respToken := &TokenResponse{}
-	//
-	//	decoder.Decode(respToken)
-	//	spew.Dump(respToken)
-	//	//
-
+	count := 1
 	ticker := time.NewTicker(time.Second * 10)
 	tickerToken := time.NewTicker(time.Second * 25)
 	defer ticker.Stop()
@@ -155,11 +136,10 @@ func listenWs(j string, token string) {
 		case <-done:
 			return
 		case t := <-ticker.C:
+			count++
 			message := &Message{}
-			message.Token = token + "sdf"
-			message.Params = make(Object)
-			message.Params["time"] = t
-			message.Params["message"] = j + " profile message"
+			message.Pin = false
+			message.Message = user.Name + " " + t.String()
 			message.Type = "message"
 
 			b, err := json.Marshal(message)
@@ -173,36 +153,7 @@ func listenWs(j string, token string) {
 				return
 			}
 		case <-tickerToken.C:
-			//убрать
-			var jsonStr = []byte(`{
-				"osVersion": "8.1.1",
-				"model": "iPhone 8",
-				"platform": "Iphone",
-				"pushToken": "string",
-				"locale": "ru",
-			
-				"applicationPackageName": "com.millcroft.inapp.sandbox",
-				"applicationVersion": "1.0.0",
-				"idfa": "9FF4ACCE-AEBF-4393-A354-E1B1FBF00B91",
-				"installId": "9FF4ACCE-AEBF-4393-A354-E1B1FBF00123",
-			
-				"udid": "FF60EE70-1F11-4880-BDE0-F908F2B18F88"
-			}`)
-			req, _ := http.NewRequest("POST", "http://localhost:8080/token", bytes.NewBuffer(jsonStr))
-			req.Header.Set("Content-Type", "application/json")
-
-			client := &http.Client{}
-			resp, _ := client.Do(req)
-			defer resp.Body.Close()
-
-			decoder := json.NewDecoder(resp.Body)
-
-			respToken := &TokenResponse{}
-
-			decoder.Decode(respToken)
-			spew.Dump(respToken)
-			fmt.Println("kukusiki")
-			//
+			updateToken(user)
 		case <-interrupt:
 			log.Println("interrupt")
 
@@ -220,4 +171,22 @@ func listenWs(j string, token string) {
 			return
 		}
 	}
+}
+
+func updateToken(user *userPool.User) {
+	req, _ := http.NewRequest("POST", "http://localhost:8080/token", bytes.NewBuffer(user.TokenByte))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+
+	decoder := json.NewDecoder(resp.Body)
+
+	respToken := &TokenResponse{}
+
+	decoder.Decode(respToken)
+	spew.Dump(respToken)
+
+	user.Token = respToken.Token
 }
